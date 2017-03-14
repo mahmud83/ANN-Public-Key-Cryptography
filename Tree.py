@@ -9,7 +9,8 @@ class Tree():
 		self.numNodes = 0
 		self.weights = []
 		self.lcs = [self.hiddenUnit(L,numInputs) for _ in range(numHidden)]	
-		self.output = self.createModel(self.lcs)		
+		self.output = self.createModel(self.lcs)	
+		self.L = L
 
 	def hiddenUnit(self, L, numInputs):
 		self.weights.append(np.array([randint(-L,L) for _ in range(numInputs)]))
@@ -34,6 +35,6 @@ class Tree():
 
 	def updateWeights(self, vector, index):
 		self.weights[index] += vector
-
+		self.weights = np.clip(self.weights, -self.L, self.L)		
 
 
