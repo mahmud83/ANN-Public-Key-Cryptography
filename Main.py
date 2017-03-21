@@ -13,39 +13,33 @@ parser.add_argument('-simple', default = True, type = bool, help = 'Indicates wh
 parser.add_argument('-attack',default = False, type = bool, help = 'Indicates whether or not to run a key exchange while being attacked')
 parser.add_argument('-tensorboard', action = 'store_false',  help = 'Not supported yet')
 parser.add_argument('-concurrent', action = 'store_true',  help = "Run the experiment concurrently or not")
-
 args = parser.parse_args()
-
 
 K = args.numHidden
 N = args.inputLength
 L = args.maxValue
 
 def log(count, accuracyAB, accuracyE, tensorboard = False):
-	#TODO: Add tensorboard support
-	if(accuracyE == None):
-		sys.stdout.write('\r'+ "Iteration : %d | A/B Accuracy : %f"%(count,accuracyAB))
-		#sys.stdout.write('\r' + str(count) +',' +str(accuracyAB))
+	sys.stdout.write('\r'+ "Iteration : %d | A/B Accuracy : %f | C Accuracy : %f"%(count,accuracyAB, accuracyE))
 	sys.stdout.flush()
-
 
 def getTrees(K,N,L, numTrees):
 	return [Tree(K,N,L) for _ in range(numTrees)]
 
-
-def expMovGen(logging= False):
-	accuracy = 0.0
+def expMovGen(logging= True):
+	accuracyAB, accuracyC = 0.0, 0.0
 	count = 0 
 	while(True):
-		updateValue = yield [accuracy, count]
+		updateValueAB, updateValueC = yield [accuracyAB, accuracyC, count]
 		if(logging):
-			log(count, accuracy, None)
+			log(count, accuracyAB, accuracyC)
 
-		accuracy = accuracy*0.99 + 0.01*updateValue
+		accuracyAB = accuracyAB*0.99 + 0.01*updateValueAB
+		accuracyC = accuracyC*0.99 + 0.01*updateValueC
 		count += 1
 
-def regularTrain(K, N, L, queue):
-		
+def regularTrain(K, N, L, queue,id):
+	np.random.seed()
 	treeA, treeB  = getTrees(K,N,L,numTrees = 2)
 	accuracyManager = expMovGen(logging = True)
 	accuracyManager.send(None)
@@ -54,7 +48,7 @@ def regularTrain(K, N, L, queue):
 		inputs = np.random.randint(-L,L+1, [K, N])
 		hiddenA,outputA = treeA.getActivations(inputs)
 		hiddenB,outputB = treeB.getActivations(inputs)
-		accuracy, count = accuracyManager.send(float(outputA == outputB))
+		accuracy,_ ,count = accuracyManager.send([float(outputA == outputB), -1.0])
 		treeA.updateWeights(inputs, hiddenA, outputA, outputB)
 		treeB.updateWeights(inputs, hiddenB, outputB, outputA)
 	print("\nIt took %s iterations for the networks to synchronize."%str(count))
@@ -63,53 +57,62 @@ def regularTrain(K, N, L, queue):
 
 	return [accuracy, count]
 
-
-
-def trainWithSimpleAttack(K,N,L):
+def trainWithSimpleAttack(K,N,L,queue, id):
+	np.random.seed()
 	treeA, treeB, treeC = getTrees(K,N,L,numTrees=3)
 	accuracyManager = expMovGen()
 	accuracyManager.send(None)
-	accuracy = 0.0
-	while(accuracy<0.99):
+	accuracyAB = 0.0
+	while(accuracyAB<0.99):
 		inputs = np.random.randint(-L,L+1, [K, N])
 		hiddenA,outputA = treeA.getActivations(inputs)
 		hiddenB,outputB = treeB.getActivations(inputs)
-		accuracy, count = accuracyManager.send(float(outputA == outputB))
+		hiddenC,outputC = treeC.getActivations(inputs)
+		accuracyAB,accuracyC, count = accuracyManager.send([float(outputA == outputB), float(outputA == outputB == outputC)])
 		treeA.updateWeights(inputs, hiddenA, outputA, outputB)
 		treeB.updateWeights(inputs, hiddenB, outputB, outputA)
+		treeC.updateWeights(inputs, hiddenC, outputA, int(outputB == outputC))
 	print("\nIt took %s iterations for the networks to synchronize."%str(count))
-
+	if(queue != None):
+		queue.put([count, accuracyC])
+	return [accuracyAB, accuracyC, count ]
 
 def experiment(numIters, K,N,L, concurrent):
 	countQ = Queue()
 	counts = []
+	eveSync = []
 	start = time.time()
+	trainFunction = trainWithSimpleAttack
 	if(concurrent):
-		concurrentGames = [Process(target = regularTrain, args = (K,N,L,countQ)) for _ in range(numIters)]
+		concurrentGames = [Process(target = trainFunction, args = (K,N,L,countQ, i)) for i in range(numIters)]
 		for game in concurrentGames:
 			game.start()
 
 		for game in concurrentGames:
 			game.join()
 	else:
-
-		for _ in range(numIters):
-			counts.append(regularTrain(K,N,L, None)[1])
+		for i in range(numIters):
+			counts.append(trainFunction(K,N,L, None, i)[1])
 
 	while(not countQ.empty()):
-		a = countQ.get()
-		counts.append(a)
+		c,e = countQ.get()
+		counts.append(c)
+		eveSync.append(e)
 
 	elapsed = time.time() - start
 	
 	print(counts)
 	avgCounts = np.mean(np.array(counts))
 	stdDev = np.std(np.array(counts))
+	avgEve = np.mean(np.array(eveSync))
+	stdDevEve = np.std(np.array(eveSync))
 
 	print("|+++++++EXPERIMENT COMPLETE++++++++|")
 	print("|Average Iterations Required : %s  |"%str(avgCounts))
-	print("|Standard Deviation          : %s  |"%str(stdDev))
+	print("|Standard Deviation AB Sync  : %s  |"%str(stdDev))
+	print("|Average Eve Synchronization : %s  |"%str(avgEve))
+	print("|Standard Deviation Eve Sync : %s  |"%str(stdDevEve))
 	print("|Elapsed Time                : %s  |"%str(elapsed))
 	print("|++++++++++++++++++++++++++++++++++|")
 
-experiment(10, K,N,L, args.concurrent)
+experiment(4, K,N,L, args.concurrent)
