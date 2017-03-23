@@ -19,6 +19,8 @@ K = args.numHidden
 N = args.inputLength
 L = args.maxValue
 
+#TODO: Create an update function for all of the common updates (A and B update always the same)
+
 def log(count, accuracyAB, accuracyE, tensorboard = False):
 	sys.stdout.write('\r'+ "Iteration : %d | A/B Accuracy : %f | C Accuracy : %f"%(count,accuracyAB, accuracyE))
 	sys.stdout.flush()
@@ -56,6 +58,23 @@ def regularTrain(K, N, L, queue,id):
 		queue.put(count)
 
 	return [accuracy, count]
+
+def trainWithGeometricAttack(K,N,L, queue, id):
+	np.random.seed()
+	treeA, treeB, treeC = getTrees(K,N,L,numTrees=3)
+	accuracyManager = expMovGen()
+	accuracyManager.send(None)
+	accuracyAB = 0.0
+	while(accuracyAB<0.99):
+		#inputs - np.random.randint(-L, L+1, [K,N]))	
+		hiddenA, outputA = treeA.getActivation(inputs)
+		hiddenB, outputB = treeB.getActivation(inputs)
+		hiddenC, outputC = treeC.getActivation(inputs)
+		accuracyAB, accuracyC, count = accuracyManager.send([float(outputA == outputB), float(outputA == outputB == outputC)])
+		#Update Logic:
+		treeA.updateWeights(inputs, hiddenA, outputA, outputB)
+		treeB.updateWeights(inputs, hiddenB, outputB, outputA)
+		
 
 def trainWithSimpleAttack(K,N,L,queue, id):
 	np.random.seed()
