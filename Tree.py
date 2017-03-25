@@ -10,11 +10,14 @@ class Tree():
 		self.weights = np.random.randint(-l,l+1, [k, n])
 
 
-	def getActivations(self, inputs):
+	def getActivations(self, inputs, nonActivated = False):
 		hidden = []
 		for weightGroup, inputGroup in zip(self.weights, inputs):
 			hidden.append(np.dot(weightGroup, inputGroup))
-                
+
+		if(nonActivated):
+			return np.abs(np.array(hidden))
+            
 		hidden = np.sign(np.array(hidden))
 		output = np.prod(hidden)
 		return [hidden, output]
@@ -25,4 +28,5 @@ class Tree():
 			update = input*float(hidden[index]==outputSelf)*float(outputSelf==outputOther==1)
 			self.weights = np.clip((self.weights+update), -self.l, self.l)
 
+    
 

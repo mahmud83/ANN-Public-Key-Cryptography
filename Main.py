@@ -66,15 +66,28 @@ def trainWithGeometricAttack(K,N,L, queue, id):
 	accuracyManager.send(None)
 	accuracyAB = 0.0
 	while(accuracyAB<0.99):
-		#inputs - np.random.randint(-L, L+1, [K,N]))	
-		hiddenA, outputA = treeA.getActivation(inputs)
-		hiddenB, outputB = treeB.getActivation(inputs)
-		hiddenC, outputC = treeC.getActivation(inputs)
+		inputs = np.random.randint(-L, L+1, [K,N])
+		hiddenA, outputA = treeA.getActivations(inputs)
+		hiddenB, outputB = treeB.getActivations(inputs)
+		hiddenC, outputC = treeC.getActivations(inputs)
+        #Flip the bit most likely to be incorrect
+		if(outputA == outputB and outputB != outputC):
+			nonActivated = treeC.getActivations(inputs, nonActivated = True)
+			uncertainIndex = np.argmin(nonActivated)
+			#Flip the bit. No effect if it guessed zero...
+			hiddenC[uncertainIndex] *= -1
+			outputC = np.prod(hiddenC)
+              
 		accuracyAB, accuracyC, count = accuracyManager.send([float(outputA == outputB), float(outputA == outputB == outputC)])
 		#Update Logic:
 		treeA.updateWeights(inputs, hiddenA, outputA, outputB)
 		treeB.updateWeights(inputs, hiddenB, outputB, outputA)
-		
+        #Regular attack update after hidden bit flipped
+		treeC.updateWeights(inputs, hiddenC, outputA, int(outputB == outputC))
+	print("\nIt took %s iterations for the networks to synchronize. Eve achieved %s synchronization"%(str(count),str(accuracyC)))
+	if(queue != None):
+		queue.put([count, accuracyC])
+	return [accuracyAB, accuracyC, count ]
 
 def trainWithSimpleAttack(K,N,L,queue, id):
 	np.random.seed()
@@ -101,32 +114,35 @@ def experiment(numIters, K,N,L, concurrent):
 	counts = []
 	eveSync = []
 	start = time.time()
-	trainFunction = trainWithSimpleAttack
+	trainFunction = trainWithGeometricAttack
 	if(concurrent):
+
 		concurrentGames = [Process(target = trainFunction, args = (K,N,L,countQ, i)) for i in range(numIters)]
 		for game in concurrentGames:
 			game.start()
 
 		for game in concurrentGames:
 			game.join()
+
+		while(not countQ.empty()):
+	                c,e = countQ.get()
+        	        counts.append(c)
+                	eveSync.append(e)
 	else:
 		for i in range(numIters):
-			counts.append(trainFunction(K,N,L, None, i)[1])
+			a,e,c = trainFunction(K,N,L, None, i)
+			eveSync.append(e)
+			counts.append(c)
+			
 
-	while(not countQ.empty()):
-		c,e = countQ.get()
-		counts.append(c)
-		eveSync.append(e)
 
 	elapsed = time.time() - start
-	
-	print(counts)
 	avgCounts = np.mean(np.array(counts))
 	stdDev = np.std(np.array(counts))
 	avgEve = np.mean(np.array(eveSync))
 	stdDevEve = np.std(np.array(eveSync))
 
-	print("|+++++++EXPERIMENT COMPLETE++++++++|")
+	print("\n|+++++++EXPERIMENT COMPLETE++++++++|")
 	print("|Average Iterations Required : %s  |"%str(avgCounts))
 	print("|Standard Deviation AB Sync  : %s  |"%str(stdDev))
 	print("|Average Eve Synchronization : %s  |"%str(avgEve))
